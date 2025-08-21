@@ -7,9 +7,11 @@ use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
 use embassy_boot_stm32::*;
+use embassy_stm32::time::Hertz;
 use embassy_stm32::flash::{Flash, BANK1_REGION, WRITE_SIZE};
 //use embassy_stm32::rcc::WPAN_DEFAULT;
 use embassy_stm32::usb::Driver;
+use embassy_stm32::gpio::{AnyPin, Level, Output, Speed};
 use embassy_stm32::{bind_interrupts, peripherals, usb};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_usb::{msos, Builder};
@@ -34,21 +36,41 @@ static PUBLIC_SIGNING_KEY: &[u8; 32] = include_bytes!("../secrets/key.pub.short"
 #[entry]
 fn main() -> ! {
     let mut config = embassy_stm32::Config::default();
-    //config.rcc = WPAN_DEFAULT;
+    {
+        use embassy_stm32::rcc::*;
+        // 80Mhz clock (Source: 8 / SrcDiv: 1 * PllMul 20 / ClkDiv 2)
+        // 80MHz highest frequency for flash 0 wait.
+        config.rcc.sys = Sysclk::PLL1_R;
+        config.rcc.hse = Some(Hse {
+            freq: Hertz::mhz(8),
+            mode: HseMode::Oscillator,
+        });
+        config.rcc.pll = Some(Pll {
+            source: PllSource::HSE,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL48,
+            divp: None,
+            divq: Some(PllQDiv::DIV8),
+            divr: Some(PllRDiv::DIV6), // sysclk 80Mhz clock (8 / 1 * 20 / 2)
+        });
+        config.rcc.mux.clk48sel = mux::Clk48sel::PLL1_Q;
+    }
     let p = embassy_stm32::init(config);
 
     // Prevent a hard fault when accessing flash 'too early' after boot.
-    #[cfg(feature = "defmt")]
-    for _ in 0..100000000 {
+    //#[cfg(feature = "defmt")]
+    for _ in 0..1000000 {
         cortex_m::asm::nop();
     }
-
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
     let flash = Mutex::new(RefCell::new(layout.bank1_region));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
     let active_offset = config.active.offset();
+    let mut led = Output::new(p.PC13, Level::High, Speed::Low);
+    led.set_low();
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
+
     if bl.state == State::DfuDetach {
         //let driver = Driver::new(p.USB, Irqs, p.PA12, p.PA11);
         let mut usb_config = embassy_stm32::usb::Config::default();
@@ -110,6 +132,7 @@ fn main() -> ! {
         embassy_futures::block_on(dev.run());
     }
 
+    led.set_high();
     unsafe { bl.load(BANK1_REGION.base + active_offset) }
 }
 
