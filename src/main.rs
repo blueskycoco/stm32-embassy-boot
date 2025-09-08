@@ -2,7 +2,6 @@
 #![no_main]
 
 use core::cell::RefCell;
-
 use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
@@ -56,7 +55,6 @@ fn main() -> ! {
         config.rcc.mux.clk48sel = mux::Clk48sel::PLL1_Q;
     }
     let p = embassy_stm32::init(config);
-
     // Prevent a hard fault when accessing flash 'too early' after boot.
     //#[cfg(feature = "defmt")]
     for _ in 0..1000000 {
@@ -64,11 +62,11 @@ fn main() -> ! {
     }
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
     let flash = Mutex::new(RefCell::new(layout.bank1_region));
+    let flash2 = Mutex::new(RefCell::new(layout.bank2_region));
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash2, &flash);
     let active_offset = config.active.offset();
     let mut led = Output::new(p.PC13, Level::High, Speed::Low);
-    led.set_low();
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
 
     if bl.state == State::DfuDetach {
@@ -82,13 +80,13 @@ fn main() -> ! {
         config.product = Some("USB-DFU Bootloader example");
         config.serial_number = Some("1235678");
 
-        let fw_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+        let fw_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash2, &flash);
         let mut buffer = AlignedBuffer([0; WRITE_SIZE]);
         let updater = BlockingFirmwareUpdater::new(fw_config, &mut buffer.0[..]);
 
         let mut config_descriptor = [0; 256];
         let mut bos_descriptor = [0; 256];
-        let mut control_buf = [0; 4096];
+        let mut control_buf = [0; 2048];
 
         #[cfg(not(feature = "verify"))]
         let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD, ResetImmediate);
@@ -96,6 +94,7 @@ fn main() -> ! {
         #[cfg(feature = "verify")]
         let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD, ResetImmediate, PUBLIC_SIGNING_KEY);
 
+    led.set_low();
         let mut builder = Builder::new(
             driver,
             config,
@@ -111,28 +110,27 @@ fn main() -> ! {
         // It seems these always need to be at added at the device level for this to work and for
         // composite devices they also need to be added on the function level (as shown later).
         //
-        builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
-        builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
-        builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
-            "DeviceInterfaceGUIDs",
-            msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
-        ));
+     //   builder.msos_descriptor(msos::windows_version::WIN8_1, 2);
+     //   builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+     //   builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+     //       "DeviceInterfaceGUIDs",
+     //       msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+     //   ));
 
-        usb_dfu::<_, _, _, _, 4096>(&mut builder, &mut state, |func| {
+        usb_dfu::<_, _, _, _, 2048>(&mut builder, &mut state, |func| {
             // You likely don't have to add these function level headers if your USB device is not composite
             // (i.e. if your device does not expose another interface in addition to DFU)
-            func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
-            func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
-                "DeviceInterfaceGUIDs",
-                msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
-            ));
+     //       func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+     //       func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+     //           "DeviceInterfaceGUIDs",
+     //           msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+       //     ));
         });
 
         let mut dev = builder.build();
         embassy_futures::block_on(dev.run());
     }
 
-    led.set_high();
     unsafe { bl.load(BANK1_REGION.base + active_offset) }
 }
 
