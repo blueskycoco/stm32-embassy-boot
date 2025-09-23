@@ -22,7 +22,7 @@ bind_interrupts!(struct Irqs {
 });
 
 // This is a randomly generated example key.
-//
+// log
 // N.B. Please replace with your own!
 #[cfg(feature = "verify")]
 static PUBLIC_SIGNING_KEY: &[u8; 32] = include_bytes!("../secrets/key.pub.short");
