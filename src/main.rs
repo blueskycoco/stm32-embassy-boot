@@ -7,9 +7,18 @@ use cortex_m_rt::{entry, exception};
 use defmt_rtt as _;
 use embassy_boot_stm32::*;
 use embassy_stm32::time::Hertz;
-use embassy_stm32::flash::{Flash, BANK1_REGION};
+use embassy_stm32::flash::{Flash, BANK1_REGION, WRITE_SIZE};
 use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::usart::{BufferedUart, Config};
+use embassy_stm32::{bind_interrupts, peripherals, usart};
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_boot_stm32::{AlignedBuffer, FirmwareUpdaterConfig};
+use static_cell::StaticCell;
+use embedded_io::{Read, Write};
+
+bind_interrupts!(struct Irqs {
+    USART2 => usart::BufferedInterruptHandler<peripherals::USART2>;
+});
 
 #[entry]
 fn main() -> ! {
@@ -31,8 +40,6 @@ fn main() -> ! {
         config.rcc.apb2_pre = APBPrescaler::DIV1;
     }
     let p = embassy_stm32::init(config);
-    // Prevent a hard fault when accessing flash 'too early' after boot.
-    //#[cfg(feature = "defmt")]
     for _ in 0..1000000 {
         cortex_m::asm::nop();
     }
@@ -42,52 +49,41 @@ fn main() -> ! {
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash,
                                                             &flash);
     let active_offset = config.active.offset();
-    let mut _led = Output::new(p.PC13, Level::High, Speed::Low);
+    let mut led = Output::new(p.PC13, Level::High, Speed::Low);
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
 
-/*    if bl.state == State::DfuDetach {
-        let mut usb_config = embassy_stm32::usb::Config::default();
-        usb_config.vbus_detection = false;
-        let mut ep_out_buffer = [0u8; 256];
-        let driver = Driver::new_fs(p.USB_OTG_FS, Irqs, p.PA12, p.PA11,
-                                    &mut ep_out_buffer, usb_config);
-        let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
-        config.manufacturer = Some("Embassy");
-        config.product = Some("USB-DFU Bootloader example");
-        config.serial_number = Some("1235678");
-
-        let fw_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash2,
-                                                                        &flash);
-        let mut buffer = AlignedBuffer([0; WRITE_SIZE]);
-        let updater = BlockingFirmwareUpdater::new(fw_config, &mut buffer.0[..]);
-
-        let mut config_descriptor = [0; 256];
-        let mut bos_descriptor = [0; 256];
-        let mut control_buf = [0; 2048];
-
-        #[cfg(not(feature = "verify"))]
-        let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD,
-                                        ResetImmediate);
-
-        #[cfg(feature = "verify")]
-        let mut state = Control::new(updater, DfuAttributes::CAN_DOWNLOAD,
-                                        ResetImmediate, PUBLIC_SIGNING_KEY);
-
-        led.set_low();
-        let mut builder = Builder::new(
-            driver,
-            config,
-            &mut config_descriptor,
-            &mut bos_descriptor,
-            &mut [],
-            &mut control_buf,
-        );
-
-        usb_dfu::<_, _, _, _, 2048>(&mut builder, &mut state, |_func| {});
-
-        let mut dev = builder.build();
-        embassy_futures::block_on(dev.run());
-    }*/
+    if bl.state == State::DfuDetach {
+        let mut config = Config::default();
+        config.baudrate = 2_000_000;
+        static TX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
+        let tx_buf = &mut TX_BUF.init([0; 128])[..];
+        static RX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
+        let rx_buf = &mut RX_BUF.init([0; 128])[..];
+        let usart = BufferedUart::new(p.USART2, p.PA3, p.PA2, tx_buf, rx_buf,
+            Irqs, config).unwrap();
+        let (mut usr_tx, mut usr_rx) = usart.split();
+        let mut fw_raw = [0u8; 2052]; // 2048 bytes payload + 4 bytes len
+        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+        let mut magic = AlignedBuffer([0; WRITE_SIZE]);
+        let mut updater = BlockingFirmwareUpdater::new(config, &mut magic.0);
+        let mut offset = 0;
+        loop {
+            usr_rx.read_exact(&mut fw_raw).unwrap();
+            let packet_len: u32 = (fw_raw[0] as u32) << 24 |
+                                  (fw_raw[1] as u32) << 16 |
+                                  (fw_raw[2] as u32) << 8 |
+                                  fw_raw[3] as u32;
+            updater.write_firmware(offset, &fw_raw[4..]).unwrap();
+            offset += 2048;
+            usr_tx.write_all("send ok".as_bytes()).unwrap();
+            if packet_len != 2048 {
+                //last packet
+                updater.mark_updated().unwrap();
+                led.set_low();
+                cortex_m::peripheral::SCB::sys_reset();
+            }
+        }
+    }
 
     unsafe { bl.load(BANK1_REGION.base + active_offset) }
 }
