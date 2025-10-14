@@ -62,21 +62,17 @@ fn main() -> ! {
         let usart = BufferedUart::new(p.USART2, p.PA3, p.PA2, tx_buf, rx_buf,
             Irqs, config).unwrap();
         let (mut usr_tx, mut usr_rx) = usart.split();
-        let mut fw_raw = [0u8; 2052]; // 2048 bytes payload + 4 bytes len
+        let mut fw_raw = [0u8; 2049]; // 1 (end flag), 2048 (payload)
         let config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
         let mut magic = AlignedBuffer([0; WRITE_SIZE]);
         let mut updater = BlockingFirmwareUpdater::new(config, &mut magic.0);
         let mut offset = 0;
         loop {
             usr_rx.read_exact(&mut fw_raw).unwrap();
-            let packet_len: u32 = (fw_raw[0] as u32) << 24 |
-                                  (fw_raw[1] as u32) << 16 |
-                                  (fw_raw[2] as u32) << 8 |
-                                  fw_raw[3] as u32;
-            updater.write_firmware(offset, &fw_raw[4..]).unwrap();
+            updater.write_firmware(offset, &fw_raw[1..]).unwrap();
             offset += 2048;
             usr_tx.write_all("send ok".as_bytes()).unwrap();
-            if packet_len != 2048 {
+            if fw_raw[0] != 0 {
                 //last packet
                 updater.mark_updated().unwrap();
                 led.set_low();
