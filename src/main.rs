@@ -8,7 +8,7 @@ use defmt_rtt as _;
 use embassy_boot_stm32::*;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::flash::{Flash, BANK1_REGION, WRITE_SIZE};
-use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::gpio::{Level, Output, Speed, Input, Pull};
 use embassy_stm32::usart::{BufferedUart, Config};
 use embassy_stm32::{bind_interrupts, peripherals, usart};
 use embassy_sync::blocking_mutex::Mutex;
@@ -49,7 +49,14 @@ fn main() -> ! {
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash,
                                                             &flash);
     let active_offset = config.active.offset();
-    let mut led = Output::new(p.PC13, Level::High, Speed::Low);
+    let mut led = Output::new(p.PA12, Level::High, Speed::Low);
+    let button = Input::new(p.PC5, Pull::None);
+    let updater_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+    let mut magic = AlignedBuffer([0; WRITE_SIZE]);
+    let mut updater = BlockingFirmwareUpdater::new(updater_config, &mut magic.0);
+    if button.is_low() {
+        updater.mark_dfu().unwrap();
+    }
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
 
     if bl.state == State::DfuDetach {
@@ -63,15 +70,13 @@ fn main() -> ! {
             Irqs, config).unwrap();
         let (mut usr_tx, mut usr_rx) = usart.split();
         let mut fw_raw = [0u8; 2049]; // 1 (end flag), 2048 (payload)
-        let config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
-        let mut magic = AlignedBuffer([0; WRITE_SIZE]);
-        let mut updater = BlockingFirmwareUpdater::new(config, &mut magic.0);
         let mut offset = 0;
         loop {
-            usr_tx.write_all("send ok".as_bytes()).unwrap();
             usr_rx.read_exact(&mut fw_raw).unwrap();
             updater.write_firmware(offset, &fw_raw[1..]).unwrap();
             offset += 2048;
+            led.toggle();
+            usr_tx.write_all("send ok".as_bytes()).unwrap();
             if fw_raw[0] != 0 {
                 //last packet
                 updater.mark_updated().unwrap();
