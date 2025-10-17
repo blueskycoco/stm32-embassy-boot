@@ -6,15 +6,15 @@ use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
 use embassy_boot_stm32::*;
-use embassy_stm32::time::Hertz;
+use embassy_boot_stm32::{AlignedBuffer, FirmwareUpdaterConfig};
 use embassy_stm32::flash::{Flash, BANK1_REGION, WRITE_SIZE};
-use embassy_stm32::gpio::{Level, Output, Speed, Input, Pull};
+use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
+use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, Config};
 use embassy_stm32::{bind_interrupts, peripherals, usart};
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_boot_stm32::{AlignedBuffer, FirmwareUpdaterConfig};
-use static_cell::StaticCell;
 use embedded_io::{Read, Write};
+use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
     USART2 => usart::BufferedInterruptHandler<peripherals::USART2>;
@@ -46,8 +46,7 @@ fn main() -> ! {
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
     let flash = Mutex::new(RefCell::new(layout.bank1_region));
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash,
-                                                            &flash);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
     let active_offset = config.active.offset();
     let mut led = Output::new(p.PA12, Level::High, Speed::Low);
     let button = Input::new(p.PC5, Pull::None);
@@ -66,8 +65,8 @@ fn main() -> ! {
         let tx_buf = &mut TX_BUF.init([0; 128])[..];
         static RX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
         let rx_buf = &mut RX_BUF.init([0; 128])[..];
-        let usart = BufferedUart::new(p.USART2, p.PA3, p.PA2, tx_buf, rx_buf,
-            Irqs, config).unwrap();
+        let usart =
+            BufferedUart::new(p.USART2, p.PA3, p.PA2, tx_buf, rx_buf, Irqs, config).unwrap();
         let (mut usr_tx, mut usr_rx) = usart.split();
         let mut fw_raw = [0u8; 2049]; // 1 (end flag), 2048 (payload)
         let mut offset = 0;
