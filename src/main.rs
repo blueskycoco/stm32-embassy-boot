@@ -71,7 +71,7 @@ fn main() -> ! {
         let mut fw_raw = [0u8; 2049]; // 1 (end flag), 2048 (payload)
         let mut offset = 0;
         loop {
-            usr_tx.write_all("send ok".as_bytes()).unwrap();
+            usr_tx.write_all("send ota".as_bytes()).unwrap();
             usr_rx.read_exact(&mut fw_raw).unwrap();
             updater.write_firmware(offset, &fw_raw[1..]).unwrap();
             offset += 2048;
