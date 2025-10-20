@@ -9,17 +9,17 @@ license = "MIT OR Apache-2.0"
 defmt = { version = "1.0.1", optional = true }
 defmt-rtt = { version = "1.0.0", optional = true }
 
-embassy-stm32 = { path = "../embassy/embassy-stm32", features = ["stm32l476ve"] }
-embassy-boot-stm32 = { path = "../embassy/embassy-boot-stm32" }
+embassy-stm32 = { path = "../embassy-up/embassy-stm32", features = ["stm32l476ve"] }
+embassy-boot-stm32 = { path = "../embassy-up/embassy-boot-stm32" }
 cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
-embassy-sync = { version = "0.7.0", path = "../embassy/embassy-sync" }
+embassy-sync = { version = "0.7.2", path = "../embassy-up/embassy-sync" }
 cortex-m-rt = { version = "0.7" }
 embedded-storage = "0.3.1"
 embedded-storage-async = "0.4.0"
 cfg-if = "1.0.0"
-embassy-usb-dfu = { version = "0.2.0", path = "../embassy/embassy-usb-dfu", features = ["dfu", "cortex-m"] }
-embassy-usb = { version = "0.5.1", path = "../embassy/embassy-usb", default-features = false }
-embassy-futures = { version = "0.1.1", path = "../embassy/embassy-futures" }
+embassy-usb-dfu = { version = "0.2.0", path = "../embassy-up/embassy-usb-dfu", features = ["dfu", "cortex-m"] }
+embassy-usb = { version = "0.5.1", path = "../embassy-up/embassy-usb", default-features = false }
+embassy-futures = { version = "0.1.1", path = "../embassy-up/embassy-futures" }
 
 [features]
 defmt = [

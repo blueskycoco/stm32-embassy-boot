@@ -10,7 +10,7 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::flash::{Flash, BANK1_REGION, WRITE_SIZE};
 //use embassy_stm32::rcc::WPAN_DEFAULT;
 use embassy_stm32::usb::Driver;
-use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::gpio::{Level, Output, Speed, Input, Pull};
 use embassy_stm32::{bind_interrupts, peripherals, usb};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_usb::{Builder};
@@ -61,6 +61,14 @@ fn main() -> ! {
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash2,
                                                             &flash);
+    let update_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+    let mut magic = AlignedBuffer([0; WRITE_SIZE]);
+    let mut firmware_state = BlockingFirmwareState::from_config(update_config, &mut magic.0);
+    let button = Input::new(p.PE13, Pull::Up);
+    if button.is_low() {
+        firmware_state.mark_dfu().expect("Failed to mark dfu");
+    }
+
     let active_offset = config.active.offset();
     let mut led = Output::new(p.PC13, Level::High, Speed::Low);
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
