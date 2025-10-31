@@ -7,7 +7,7 @@ use cortex_m_rt::{entry, exception};
 use defmt_rtt as _;
 use embassy_boot_stm32::*;
 use embassy_boot_stm32::{AlignedBuffer, FirmwareUpdaterConfig};
-use embassy_stm32::flash::{Flash, BANK1_REGION, WRITE_SIZE};
+use embassy_stm32::flash::{Flash, BANK1_REGION1, WRITE_SIZE};
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, Config};
@@ -17,45 +17,65 @@ use embedded_io::{Read, Write};
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
-    USART2 => usart::BufferedInterruptHandler<peripherals::USART2>;
+    USART1 => usart::BufferedInterruptHandler<peripherals::USART1>;
 });
 
 #[entry]
 fn main() -> ! {
-    let mut config = embassy_stm32::Config::default();
-    {
+    let config = {
         use embassy_stm32::rcc::*;
-        config.rcc.sys = Sysclk::PLL1_P;
+
+        let mut config = embassy_stm32::Config::default();
         config.rcc.hse = Some(Hse {
-            freq: Hertz::mhz(8),
-            mode: HseMode::Bypass,
+            freq: Hertz::mhz(25),
+            mode: HseMode::Oscillator,
         });
+        config.rcc.pll_src = PllSource::HSE;
         config.rcc.pll = Some(Pll {
-            src: PllSource::HSE,
-            prediv: PllPreDiv::DIV1,
-            mul: PllMul::MUL9,
+            prediv: PllPreDiv::DIV25,
+            mul: PllMul::MUL336,
+            divp: Some(PllPDiv::DIV2),
+            divq: Some(PllQDiv::DIV7),
+            divr: None,
         });
+        config.rcc.sys = Sysclk::PLL1_P;
+
         config.rcc.ahb_pre = AHBPrescaler::DIV1;
-        config.rcc.apb1_pre = APBPrescaler::DIV2;
-        config.rcc.apb2_pre = APBPrescaler::DIV1;
-    }
+        config.rcc.apb1_pre = APBPrescaler::DIV4;
+        config.rcc.apb2_pre = APBPrescaler::DIV2;
+
+        // reference your chip's manual for proper clock settings; this config
+        // is recommended for a 32 bit frame at 48 kHz sample rate
+        config.rcc.plli2s = Some(Pll {
+            prediv: PllPreDiv::DIV25,
+            mul: PllMul::MUL336,
+            divp: None,
+            divq: None,
+            divr: Some(PllRDiv::DIV5),
+        });
+        config.enable_debug_during_sleep = true;
+
+        config
+    };
     let p = embassy_stm32::init(config);
+    #[cfg(feature = "defmt")]
+    defmt::info!("Hello World!");
     for _ in 0..1000000 {
         cortex_m::asm::nop();
     }
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
-    let flash = Mutex::new(RefCell::new(layout.bank1_region));
+    let flash = Mutex::new(RefCell::new(layout.bank1_region1));
 
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
     let active_offset = config.active.offset();
-    let mut led = Output::new(p.PA12, Level::High, Speed::Low);
-    let button = Input::new(p.PC5, Pull::None);
+    let mut led = Output::new(p.PC15, Level::High, Speed::Low);
+    //let button = Input::new(p.PC5, Pull::None);
     let updater_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
     let mut magic = AlignedBuffer([0; WRITE_SIZE]);
     let mut updater = BlockingFirmwareUpdater::new(updater_config, &mut magic.0);
-    if button.is_low() {
+    //if button.is_low() {
         updater.mark_dfu().unwrap();
-    }
+    //}
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
 
     if bl.state == State::DfuDetach {
@@ -66,15 +86,15 @@ fn main() -> ! {
         static RX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
         let rx_buf = &mut RX_BUF.init([0; 128])[..];
         let usart =
-            BufferedUart::new(p.USART2, p.PA3, p.PA2, tx_buf, rx_buf, Irqs, config).unwrap();
+            BufferedUart::new(p.USART1, p.PA10, p.PA9, tx_buf, rx_buf, Irqs, config).unwrap();
         let (mut usr_tx, mut usr_rx) = usart.split();
-        let mut fw_raw = [0u8; 2049]; // 1 (end flag), 2048 (payload)
+        let mut fw_raw = [0u8; 131073]; // 1 (end flag), 16384 (payload)
         let mut offset = 0;
         loop {
             usr_tx.write_all("send ot".as_bytes()).unwrap();
             usr_rx.read_exact(&mut fw_raw).unwrap();
             updater.write_firmware(offset, &fw_raw[1..]).unwrap();
-            offset += 2048;
+            offset += 131073;
             led.toggle();
             if fw_raw[0] != 0 {
                 //last packet
@@ -85,7 +105,7 @@ fn main() -> ! {
         }
     }
 
-    unsafe { bl.load(BANK1_REGION.base + active_offset) }
+    unsafe { bl.load(BANK1_REGION1.base + active_offset) }
 }
 
 #[no_mangle]
