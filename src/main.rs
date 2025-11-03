@@ -118,6 +118,11 @@ fn main() -> ! {
         embassy_futures::block_on(dev.run());
     }
 
+    #[cfg(feature = "defmt")]
+    defmt::info!("load app");
+    for _ in 0..1000 {
+        cortex_m::asm::nop();
+    }
     unsafe { bl.load(BANK1_REGION.base + active_offset) }
 }
 
