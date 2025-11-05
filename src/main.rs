@@ -107,7 +107,6 @@ fn main() -> ! {
             #[cfg(feature = "defmt")]
             defmt::info!("Hello World! 1 {}", fw_raw[0]);
             updater.write_firmware(offset, &fw_raw[1..]).unwrap();
-            updater.mark_updated().unwrap();
             #[cfg(feature = "defmt")]
             defmt::info!("Hello World! 2");
             offset += 65536;
@@ -116,6 +115,7 @@ fn main() -> ! {
                 //last packet
                 #[cfg(feature = "defmt")]
                 defmt::info!("Hello World! 3");
+                updater.mark_updated().unwrap();
                 cortex_m::peripheral::SCB::sys_reset();
             }
         }
