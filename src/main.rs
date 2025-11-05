@@ -7,7 +7,7 @@ use cortex_m_rt::{entry, exception};
 use defmt_rtt as _;
 use embassy_boot_stm32::*;
 use embassy_boot_stm32::{AlignedBuffer, FirmwareUpdaterConfig};
-use embassy_stm32::flash::{Flash, BANK1_REGION1, WRITE_SIZE};
+use embassy_stm32::flash::{Flash, BANK1_REGION3, WRITE_SIZE};
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, Config};
@@ -60,27 +60,38 @@ fn main() -> ! {
     let p = embassy_stm32::init(config);
     #[cfg(feature = "defmt")]
     defmt::info!("Hello World!");
-    for _ in 0..1000000 {
+    for _ in 0..10000 {
         cortex_m::asm::nop();
     }
     let layout = Flash::new_blocking(p.FLASH).into_blocking_regions();
-    let flash = Mutex::new(RefCell::new(layout.bank1_region1));
+    let flash_state = Mutex::new(RefCell::new(layout.bank1_region1));
+    let flash_active_dfu = Mutex::new(RefCell::new(layout.bank1_region3));
 
-    let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
+    let config = BootLoaderConfig::from_linkerfile_blocking(&flash_active_dfu, &flash_active_dfu, &flash_state);
     let active_offset = config.active.offset();
     let mut led = Output::new(p.PC15, Level::High, Speed::Low);
-    //let button = Input::new(p.PC5, Pull::None);
-    let updater_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+    let button = Input::new(p.PE1, Pull::Up);
+    let updater_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash_active_dfu, &flash_state);
     let mut magic = AlignedBuffer([0; WRITE_SIZE]);
     let mut updater = BlockingFirmwareUpdater::new(updater_config, &mut magic.0);
-    //if button.is_low() {
-        updater.mark_dfu().unwrap();
-    //}
+    led.set_high();
+    if button.is_low() {
+        #[cfg(feature = "defmt")]
+        defmt::info!("Enter DFU mode");
+        match updater.mark_dfu() {
+            Err(e) => {
+                #[cfg(feature = "defmt")]
+                defmt::info!("err {:?}", e);
+            },
+            Ok(_) => {}
+        };
+    }
     let bl = BootLoader::prepare::<_, _, _, 2048>(config);
 
     if bl.state == State::DfuDetach {
+        led.set_low();
         let mut config = Config::default();
-        config.baudrate = 2_000_000;
+        config.baudrate = 115_200;
         static TX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
         let tx_buf = &mut TX_BUF.init([0; 128])[..];
         static RX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
@@ -88,24 +99,30 @@ fn main() -> ! {
         let usart =
             BufferedUart::new(p.USART1, p.PA10, p.PA9, tx_buf, rx_buf, Irqs, config).unwrap();
         let (mut usr_tx, mut usr_rx) = usart.split();
-        let mut fw_raw = [0u8; 131073]; // 1 (end flag), 16384 (payload)
+        let mut fw_raw = [0u8; 65537]; // 1 (end flag), 16384 (payload)
         let mut offset = 0;
         loop {
             usr_tx.write_all("send ot".as_bytes()).unwrap();
             usr_rx.read_exact(&mut fw_raw).unwrap();
+            #[cfg(feature = "defmt")]
+            defmt::info!("Hello World! 1 {}", fw_raw[0]);
             updater.write_firmware(offset, &fw_raw[1..]).unwrap();
-            offset += 131073;
+            updater.mark_updated().unwrap();
+            #[cfg(feature = "defmt")]
+            defmt::info!("Hello World! 2");
+            offset += 65536;
             led.toggle();
             if fw_raw[0] != 0 {
                 //last packet
-                updater.mark_updated().unwrap();
-                led.set_low();
+                #[cfg(feature = "defmt")]
+                defmt::info!("Hello World! 3");
                 cortex_m::peripheral::SCB::sys_reset();
             }
         }
     }
 
-    unsafe { bl.load(BANK1_REGION1.base + active_offset) }
+    led.set_high();
+    unsafe { bl.load(BANK1_REGION3.base + active_offset) }
 }
 
 #[no_mangle]
